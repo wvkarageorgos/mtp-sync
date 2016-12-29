@@ -1,0 +1,216 @@
+#!/bin/bash
+#
+# Licensed under the MIT License;
+# Copyright (C) 2016 William Karageorgos <wvkarageorgos@gmail.com> 
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
+# to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, 
+# and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER 
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS 
+# IN THE SOFTWARE.
+#
+function REQ() {
+	(which --help >/dev/null || false) 2>/dev/null
+	if [[ "$?" != "0" ]]; then
+		echo "\`which' is required for this program to run. Please installing using one of" >&2
+		echo "\tyum install which" >&2
+		echo "\tdnf install which" >&2
+		echo "\tapt-get install which" >&2
+		echo "depending on your distribution" >&2
+		exit 1
+	else
+		if ( ! which --skip-alias --skip-functions $1 >/dev/null 2>&1 ); then
+			echo "\`$2' is required for this program to run. Please installing using one of" >&2
+			echo "\tyum install $2" >&2
+			echo "\tdnf install $2" >&2
+			echo "\tapt-get install $2" >&2
+			echo "depending on your distribution" >&2
+			exit 1
+		fi
+	fi
+}
+
+function MTPCP() {
+	(
+	IFS=$'\n'
+	for i in $(gvfs-ls -h "$1" 2>/dev/null); do
+		if [[ ! -d "$SYNCPATH/$2" ]]; then
+			mkdir -p "$SYNCPATH/$2"
+		fi
+		if [[ ! -e "$SYNCPATH/$2/$i" ]]; then
+			gvfs-copy --preserve -p "$1/$i" "$SYNCPATH/$2/$i" 2>/dev/null
+		fi
+	done
+	)
+	for i in $(gvfs-ls -h -a directory "$1" 2>/dev/null | grep '(directory)' | awk '{$NF="";$(NF-1)="";print $0}' | sed -e 's/[[:space:]]*$//'); do
+		(MTPCP "$1/$i" "$2/$i")
+	done
+}
+
+# initialization
+CONF=~/.mtp-sync
+if [[ ! -d $CONF ]]; then
+	mkdir -p $CONF
+fi
+CONFDEV=$CONF/known_devices
+MODE=0 # 0=auto, 1=gvfs, 2=lsusb
+DEVID=""
+DEVNAME=""
+SYNCBASE=""
+if [[ -e $CONF/sync_path ]]; then
+	SYNCBASE=`cat $CONF/sync_path`
+else
+	echo -n "Please enter path to sync devices to [$HOME]: "
+	read
+	if [[ "$(echo $REPLY|sed -e 's/[[:space:]]*//')" == "" ]]; then
+		REPLY="$HOME"
+	fi
+	SYNCBASE="$REPLY"
+	echo $SYNCBASE > $CONF/sync_path
+fi
+if [[ ! -d "$SYNCBASE" ]]; then
+	mkdir -p "$SYNCBASE" >/dev/null 2>&1
+	if [[ "$?" != 0 ]]; then
+		echo "Could not create path to sync devices to. Aborting" >&2
+		"rm" -f $CONF/sync_path >dev/null 2>&1
+		exit 3
+	fi
+fi
+
+# requirements
+REQ gvfs-mount gvfs-mtp
+REQ gvfs-ls gvfs-mtp
+REQ gvfs-copy gvfs-mtp
+REQ lsusb usbutils
+
+if [[ "$1" == "-m" ]]; then
+	MODE=$2
+	shift 2
+fi
+case $MODE in
+	0);;
+	1);;
+	2);;
+	*) MODE=0;;
+esac
+if [[ "$1" == "-h" ]]; then
+	echo "Usage:"
+	echo "  `basename $0` [OPTION...]"
+	echo
+	echo "Sync's a device's contents via MTP"
+	echo 
+	echo "Options:"
+	echo "  -m MODE				Detection mode (0=auto, 1=gvfs, 2=lsusb)"
+	echo "  -h					This help"
+	exit
+fi
+
+MTP=""
+if [[ "$MODE" == "0" ]]; then
+	if [[ -e $CONFDEV ]]; then
+		for i in `cat $CONFDEV`;do
+			if ( lsusb | grep -q $i ); then
+				MTP="mtp://[usb:"$( lsusb|grep $i|awk '{print $2","$4}'|sed -e 's/://')"]"
+				echo "Automatically sync'ing known device $i"
+				break
+			fi
+		done
+	fi
+fi
+
+if [[ "$MTP" == "" && "$MODE" != "2" ]]; then
+		# select the first MTP device detected by gvfs-mtp
+		MTP=$(gvfs-mount -li|grep MTP -A3|grep activation_root|head -n1|sed -e 's/activation_root=//' -e 's/[[:space:]]//g')
+		DEVNAME=$(gvfs-mount -li|grep MTP -B1|head -n1|sed -e 's/Volume([0-9]\+): //')
+		if [[ "$MTP" != "" ]]; then
+			echo "Automatically sync'ing device $DEVNAME detected via gvfs"
+		fi
+fi
+if [[ "$MTP" == "" ]]; then
+		echo "No device detected through gvfs or manual mode requested. Trying lsusb..." >&2
+		# manually choose from a list of connected USB devices
+		(IFS=$'\n'; j=1; for i in `lsusb`;do echo "$j) $i"; ((j++)); done)
+		echo -n "Please enter line number: "; 
+		read
+		if [[ "$(echo $REPLY|sed -e 's/[[:space:]]*//')" == "" ]]; then
+			echo "Invalid input. Aborting" >&2
+			exit 1
+		fi
+		MTP="mtp://[usb:"$( (IFS=$'\n'; j=1; for i in `lsusb`;do echo "$j) $i"; ((j++)); done)|egrep "^${REPLY}) "|awk '{print $3","$5}'|sed -e 's/://')"]"
+		DEVNAME=$( (IFS=$'\n'; j=1; for i in `lsusb`;do echo "$j) $i"; ((j++)); done)|egrep "^${REPLY}) "|sed -e 's/.\+ ID ....:.... //')
+fi
+
+if [[ "$MTP" == "" ]]; then
+	echo "No device detected. Aborting" >&2
+	exit 2
+else
+	# remove any potential trailing slashes from MTP URI
+	MTP="$(echo $MTP|sed -e 's/\/*$//')"
+fi
+
+DEVID=$(lsusb | grep "$(echo $MTP | sed -e 's/.\+usb://' -e 's/\].*//' -e 's/,/ /'|awk '{print "Bus "$1" Device "$2":"}')" | awk '{print $6}')
+if ( ! gvfs-mount -l | grep -q $(echo "$MTP"|sed -e 's/\[/\\[/g' -e 's/\]/\\]/g') ); then
+	gvfs-mount "$MTP" >/dev/null 2>&1
+	if [[ "$?" != "0" ]]; then
+		echo "Could not access requested device using the MTP protocol. Aborting" >&2
+		exit 2
+	fi
+fi
+
+if [[ ! -e $CONFDEV ]]; then
+	echo $DEVID >> ${CONFDEV}
+	mkdir -p $CONF/$DEVID
+else
+	if ( ! grep -q $DEVID $CONFDEV ); then
+		echo $DEVID >> ${CONFDEV}
+		mkdir -p $CONF/$DEVID
+	fi
+fi
+
+if [[ "$(echo $DEVNAME | sed -e 's/[[:space:]]//g')" == "" ]]; then
+	DEVNAME="My phone"
+fi
+if [[ ! -e $CONF/$DEVID/alias ]]; then
+	echo -n "Please enter a name for the device [$DEVNAME]: "
+	read
+	if [[ "$REPLY" == "" ]]; then
+		REPLY=$DEVNAME
+	fi
+	DEVNAME=$REPLY
+	echo $DEVNAME #> $CONF/$DEVID/alias
+	echo $DEVNAME > $CONF/$DEVID/alias
+else
+	DEVNAME="$(cat $CONF/$DEVID/alias)"
+fi
+
+SYNCPATH="$SYNCBASE/$DEVNAME"
+mkdir -p "$SYNCPATH"
+
+if [[ ! -e $CONF/$DEVID/sync_paths ]]; then
+	echo "Creating first-time sync mapping"
+	echo "You can change which paths to sync for this device by editing $CONF/$DEVID/sync_paths"
+	(
+cat << EOF
+"Download" "Download"
+"DCIM" "DCIM"
+"Pictures" "Pictures"
+"viber/media/Viber Images" "Viber"
+"viber/media/Viber Videos" "Viber"
+EOF
+	) > $CONF/$DEVID/sync_paths
+fi
+(
+IFS=$'\n'
+for i in `gvfs-ls "$MTP" 2>/dev/null`;do
+	for j in `seq 1 $(cat $CONF/$DEVID/sync_paths|wc -l)`; do
+		eval SRCPATH=(`cat $CONF/1004:61f9/sync_paths|head -n$j|tail -n1`)
+		(echo "Sync'ing" "\`$MTP/$i/${SRCPATH[0]}'" into "\`${SRCPATH[1]}'")
+		(MTPCP "$MTP/$i/${SRCPATH[0]}" "${SRCPATH[1]}")
+	done
+done
+)
