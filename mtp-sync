@@ -23,8 +23,8 @@ function USAGE() {
 	echo 
 	echo "Options:"
 	echo "  -l, --list				List known devices by ID"
-	echo "  -d, --device=DEVICE			Sync a specific device based on device ID"
-	echo "  -m, --mode=MODE			Detection mode (0=auto, 1=gvfs, 2=lsusb)"
+	echo "  -d, --device DEVICE			Sync a specific device based on device ID"
+	echo "  -m, --mode MODE			Detection mode (0=auto, 1=gvfs, 2=lsusb)"
 	echo "  -u, --unmount				Unmount device from gvfs after sync'ing"	
 	echo "  -h, --help				This help screen"
 	exit
