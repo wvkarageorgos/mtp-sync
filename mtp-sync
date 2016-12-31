@@ -16,36 +16,40 @@
 #
 
 function USAGE() {
-	echo "Usage:"
-	echo "  `basename $0` [OPTION...]"
-	echo
-	echo "Synchronizes a device's contents using the MTP protocol via gvfs-mtp"
-	echo 
-	echo "Options:"
-	echo "  -l, --list				List known devices by ID"
-	echo "  -d, --device DEVICE			Sync a specific device based on device ID"
-	echo "  -m, --mode MODE			Detection mode (0=auto, 1=gvfs, 2=lsusb)"
-	echo "  -u, --unmount				Unmount device from gvfs after sync'ing"	
-	echo "  -h, --help				This help screen"
+	echo -e "Usage:"
+	echo -e "  `basename $0` [OPTION...]"
+	echo -e
+	echo -e "Synchronizes a device's contents using the MTP protocol via gvfs-mtp"
+	echo -e 
+	echo -e "Options:"
+	echo -e "  -l, --list				List known devices by ID"
+	echo -e "  -d, --device DEVICE			Sync a specific device based on device ID"
+	echo -e "  -m, --mode MODE			Detection mode (0=auto, 1=gvfs, 2=lsusb)"
+	echo -e "  -u, --unmount				Unmount device from gvfs after sync'ing"	
+	echo -e "  -n, --noreq				Skip requiments checks"
+	echo -e "  -h, --help				This help screen"
 	exit
 }
 
 function REQ() {
+	if [[ "$NOREQ" == "1" ]]; then
+		return
+	fi
 	(which --help >/dev/null || false) 2>/dev/null
 	if [[ "$?" != "0" ]]; then
-		echo "\`which' is required for this program to run. Please installing using one of" >&2
-		echo "\tyum install which" >&2
-		echo "\tdnf install which" >&2
-		echo "\tapt-get install which" >&2
-		echo "depending on your distribution" >&2
+		echo -e "\`which' is required for this program to run. Please installing using one of" >&2
+		echo -e "\tyum install which" >&2
+		echo -e "\tdnf install which" >&2
+		echo -e "\tapt-get install which" >&2
+		echo -e "depending on your distribution" >&2
 		exit 1
 	else
 		if ( ! which --skip-alias --skip-functions $1 >/dev/null 2>&1 ); then
-			echo "\`$2' is required for this program to run. Please installing using one of" >&2
-			echo "\tyum install $2" >&2
-			echo "\tdnf install $2" >&2
-			echo "\tapt-get install $2" >&2
-			echo "depending on your distribution" >&2
+			echo -e "\`$2' is required for this program to run. Please installing using one of" >&2
+			echo -e "\tyum install $2" >&2
+			echo -e "\tdnf install $2" >&2
+			echo -e "\tapt-get install $2" >&2
+			echo -e "depending on your distribution" >&2
 			exit 1
 		fi
 	fi
@@ -82,7 +86,7 @@ UNMOUNT=0
 if [[ -e $CONF/sync_path ]]; then
 	SYNCBASE=`cat $CONF/sync_path`
 else
-	echo -n "Please enter path to sync devices to [$HOME]: "
+	echo -en "Please enter path to sync devices to [$HOME]: "
 	read
 	if [[ "$(echo $REPLY|sed -e 's/[[:space:]]*//')" == "" ]]; then
 		REPLY="$HOME"
@@ -93,17 +97,12 @@ fi
 if [[ ! -d "$SYNCBASE" ]]; then
 	mkdir -p "$SYNCBASE" >/dev/null 2>&1
 	if [[ "$?" != 0 ]]; then
-		echo "Could not create path to sync devices to. Aborting" >&2
+		echo -e "Could not create path to sync devices to. Aborting" >&2
 		"rm" -f $CONF/sync_path >dev/null 2>&1
 		exit 3
 	fi
 fi
-
-# requirements
-REQ gvfs-mount gvfs-mtp
-REQ gvfs-ls gvfs-mtp
-REQ gvfs-copy gvfs-mtp
-REQ lsusb usbutils
+NOREQ=0
 
 while [[ "$1" != "" ]]; do
 	case "$1" in
@@ -123,7 +122,7 @@ while [[ "$1" != "" ]]; do
 		-d|--device)
 			DEVID=$2
 			if [[ "$DEVID" == "" ]]; then
-				echo "Missing parameter for device option" >&2
+				echo -e "Missing parameter for device option" >&2
 				exit 6
 			fi
 			shift 2
@@ -131,17 +130,21 @@ while [[ "$1" != "" ]]; do
 		-m|--mode)
 			MODE=$2
 			if [[ "$MODE" == "" ]]; then
-				echo "Missing parameter for mode option" >&2
+				echo -e "Missing parameter for mode option" >&2
 				exit 6
 			fi
 			shift 2
+			;;
+		-n|--noreq)
+			NOREQ=1
+			shift
 			;;
 		-h|--help) 
 			USAGE
 			shift
 			;;
 		*)
-			echo "Unknown option \`$1' specified" >&2
+			echo -e "Unknown option \`$1' specified" >&2
 			exit 4
 			;;
 	esac
@@ -154,6 +157,12 @@ case $MODE in
 	*) MODE=0;;
 esac
 
+# requirements
+REQ gvfs-mount gvfs-mtp
+REQ gvfs-ls gvfs-mtp
+REQ gvfs-copy gvfs-mtp
+REQ lsusb usbutils
+
 MTP=""
 if [[ "$DEVID" == "" ]]; then
 	if [[ "$MODE" == "0" ]]; then
@@ -161,7 +170,7 @@ if [[ "$DEVID" == "" ]]; then
 			for i in `cat $CONFDEV`;do
 				if ( lsusb | grep -q -- $i ); then
 					MTP="mtp://[usb:"$( lsusb|grep -- $i|awk '{print $2","$4}'|sed -e 's/://')"]"
-					echo "Automatically sync'ing known device $i"
+					echo -e "Automatically sync'ing known device $i"
 					break
 				fi
 			done
@@ -173,17 +182,17 @@ if [[ "$DEVID" == "" ]]; then
 			MTP=$(gvfs-mount -li|grep MTP -A3|grep activation_root|head -n1|sed -e 's/activation_root=//' -e 's/[[:space:]]//g')
 			DEVNAME=$(gvfs-mount -li|grep MTP -B1|head -n1|sed -e 's/Volume([0-9]\+): //')
 			if [[ "$MTP" != "" ]]; then
-				echo "Automatically sync'ing device $DEVNAME detected via gvfs"
+				echo -e "Automatically sync'ing device $DEVNAME detected via gvfs"
 			fi
 	fi
 	if [[ "$MTP" == "" ]]; then
 			echo "No device detected through gvfs or manual mode requested. Trying lsusb..." >&2
 			# manually choose from a list of connected USB devices
 			(IFS=$'\n'; j=1; for i in `lsusb`;do echo "$j) $i"; ((j++)); done)
-			echo -n "Please enter line number: "; 
+			echo -en "Please enter line number: "; 
 			read
 			if [[ "$(echo $REPLY|sed -e 's/[[:space:]]*//')" == "" ]]; then
-				echo "Invalid input. Aborting" >&2
+				echo -e "Invalid input. Aborting" >&2
 				exit 1
 			fi
 			MTP="mtp://[usb:"$( (IFS=$'\n'; j=1; for i in `lsusb`;do echo "$j) $i"; ((j++)); done)|egrep -- "^${REPLY}) "|awk '{print $3","$5}'|sed -e 's/://')"]"
@@ -194,7 +203,7 @@ else
 fi
 
 if [[ "$MTP" == "" ]]; then
-	echo "No device detected. Aborting" >&2
+	echo -e "No device detected. Aborting" >&2
 	exit 2
 else
 	# remove any potential trailing slashes from MTP URI
@@ -208,7 +217,7 @@ fi
 if ( ! gvfs-mount -l | grep -q -- $(echo "$MTP"|sed -e 's/\[/\\[/g' -e 's/\]/\\]/g') ); then
 	gvfs-mount "$MTP" >/dev/null 2>&1
 	if [[ "$?" != "0" ]]; then
-		echo "Could not access requested device \`$DEVID' using the MTP protocol. Aborting" >&2
+		echo -e "Could not access requested device \`$DEVID' using the MTP protocol. Aborting" >&2
 		exit 2
 	fi
 fi
@@ -227,7 +236,7 @@ if [[ "$(echo $DEVNAME | sed -e 's/[[:space:]]//g')" == "" ]]; then
 	DEVNAME="My phone"
 fi
 if [[ ! -e $CONF/$DEVID/alias ]]; then
-	echo -n "Please enter a name for the device [$DEVNAME]: "
+	echo -en "Please enter a name for the device [$DEVNAME]: "
 	read
 	if [[ "$REPLY" == "" ]]; then
 		REPLY=$DEVNAME
@@ -243,8 +252,8 @@ SYNCPATH="$SYNCBASE/$DEVNAME"
 mkdir -p "$SYNCPATH"
 
 if [[ ! -e $CONF/$DEVID/sync_paths ]]; then
-	echo "Creating first-time sync mapping"
-	echo "You can change which paths to sync for this device by editing $CONF/$DEVID/user_sync_paths"
+	echo -e "Creating first-time sync mapping"
+	echo -e "You can change which paths to sync for this device by editing $CONF/$DEVID/user_sync_paths"
 	(
 cat << EOF
 "Download" "Download"
@@ -264,7 +273,7 @@ IFS=$'\n'
 for i in `gvfs-ls "$MTP" 2>/dev/null`;do
 	for j in `seq 1 $(cat $CONF/$DEVID/sync_paths $CONF/$DEVID/user_sync_paths 2>/dev/null | sed -e 's/" *"/" "/g' | sort -u | wc -l)`; do
 		eval SRCPATH=(`cat $CONF/1004:61f9/sync_paths|head -n$j|tail -n1`)
-		(echo "Sync'ing" "\`$MTP/$i/${SRCPATH[0]}'" into "\`${SRCPATH[1]}'")
+		(echo -e "Sync'ing" "\`$MTP/$i/${SRCPATH[0]}'" into "\`${SRCPATH[1]}'")
 		(MTPCP "$MTP/$i/${SRCPATH[0]}" "${SRCPATH[1]}")
 	done
 done
