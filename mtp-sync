@@ -215,9 +215,10 @@ if [[ "$DEVID" == "" ]]; then
 fi
 
 if ( ! gvfs-mount -l | grep -q -- $(echo "$MTP"|sed -e 's/\[/\\[/g' -e 's/\]/\\]/g') ); then
-	gvfs-mount "$MTP" >/dev/null 2>&1
+	mounterr=$(gvfs-mount "$MTP" 2>&1 >/dev/null)
 	if [[ "$?" != "0" ]]; then
 		echo -e "Could not access requested device \`$DEVID' using the MTP protocol. Aborting" >&2
+		echo "Error was: $mounterr"
 		exit 2
 	fi
 fi
