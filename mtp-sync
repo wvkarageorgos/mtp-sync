@@ -217,8 +217,8 @@ fi
 if ( ! gvfs-mount -l | grep -q -- $(echo "$MTP"|sed -e 's/\[/\\[/g' -e 's/\]/\\]/g') ); then
 	mounterr=$(gvfs-mount "$MTP" 2>&1 >/dev/null)
 	if [[ "$?" != "0" ]]; then
-		echo -e "Could not access requested device \`$DEVID' using the MTP protocol. Aborting" >&2
-		echo "Error was: $mounterr"
+		echo -e "Could not mount requested device \`$DEVID' using gvfs-mount on address \`${MTP}'. Aborting" >&2
+		echo "gvfs-mount error was: \`${mounterr}'"
 		exit 2
 	fi
 fi
