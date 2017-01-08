@@ -35,7 +35,7 @@ function REQ() {
 	if [[ "$NOREQ" == "1" ]]; then
 		return
 	fi
-	(which --help >/dev/null || false) 2>/dev/null
+	(which which >/dev/null || false) 2>/dev/null
 	if [[ "$?" != "0" ]]; then
 		echo -e "\`which' is required for this program to run. Please installing using one of" >&2
 		echo -e "\tyum install which" >&2
@@ -44,11 +44,11 @@ function REQ() {
 		echo -e "depending on your distribution" >&2
 		exit 1
 	else
-		if ( ! which --skip-alias --skip-functions $1 >/dev/null 2>&1 ); then
+		if ( ! which $1 >/dev/null 2>&1 ); then
 			echo -e "\`$2' is required for this program to run. Please installing using one of" >&2
 			echo -e "\tyum install $2" >&2
 			echo -e "\tdnf install $2" >&2
-			echo -e "\tapt-get install $2" >&2
+			echo -e "\tapt-get install $3" >&2
 			echo -e "depending on your distribution" >&2
 			exit 1
 		fi
@@ -158,10 +158,19 @@ case $MODE in
 esac
 
 # requirements
-REQ gvfs-mount gvfs-mtp
-REQ gvfs-ls gvfs-mtp
-REQ gvfs-copy gvfs-mtp
-REQ lsusb usbutils
+REQ gvfs-mount gvfs-client gvfs-bin
+REQ gvfs-ls gvfs-client gvfs-bin
+REQ gvfs-copy gvfs-client gvfs-bin
+REQ lsusb usbutils usbutils
+if [[ "$NOREQ" == "1" ]]; then
+	true
+else
+	if [[ -e /usr/libexec/gvfsd-mtp || -e /usr/lib/gvfs/gvfsd-mtp || -e /usr/lib64/gvfsd-mtp ]]; then
+		true
+	else
+		REQ gvfsd-mtp gvfs-mtp gvfs-backends
+	fi
+fi
 
 MTP=""
 if [[ "$DEVID" == "" ]]; then
@@ -170,7 +179,7 @@ if [[ "$DEVID" == "" ]]; then
 			for i in `cat $CONFDEV`;do
 				if ( lsusb | grep -q -- $i ); then
 					MTP="mtp://[usb:"$( lsusb|grep -- $i|awk '{print $2","$4}'|sed -e 's/://')"]"
-					echo -e "Automatically sync'ing known device $i"
+					echo -e "Automatically sync'ing known device $i under $MTP"
 					break
 				fi
 			done
@@ -214,6 +223,8 @@ if [[ "$DEVID" == "" ]]; then
 	DEVID=$(lsusb | grep -- "$(echo $MTP | sed -e 's/.\+usb://' -e 's/\].*//' -e 's/,/ /'|awk '{print "Bus "$1" Device "$2":"}')" | awk '{print $6}')
 fi
 
+# unmount and re-mount to prevent stale mountpoints
+gvfs-mount -u "$MTP" >/dev/null 2>&1
 if ( ! gvfs-mount -l | grep -q -- $(echo "$MTP"|sed -e 's/\[/\\[/g' -e 's/\]/\\]/g') ); then
 	mounterr=$(gvfs-mount "$MTP" 2>&1 >/dev/null)
 	if [[ "$?" != "0" ]]; then
@@ -274,7 +285,7 @@ IFS=$'\n'
 for i in `gvfs-ls "$MTP" 2>/dev/null`;do
 	for j in `seq 1 $(cat $CONF/$DEVID/sync_paths $CONF/$DEVID/user_sync_paths 2>/dev/null | sed -e 's/" *"/" "/g' | sort -u | wc -l)`; do
 		eval SRCPATH=(`cat $CONF/1004:61f9/sync_paths|head -n$j|tail -n1`)
-		(echo -e "Sync'ing" "\`$MTP/$i/${SRCPATH[0]}'" into "\`${SRCPATH[1]}'")
+		(echo; echo -e "Sync'ing" "\`$MTP/$i/${SRCPATH[0]}'" into "\`${SRCPATH[1]}'")
 		(MTPCP "$MTP/$i/${SRCPATH[0]}" "${SRCPATH[1]}")
 	done
 done
