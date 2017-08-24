@@ -15,17 +15,29 @@
 # IN THE SOFTWARE.
 #
 
+if ( which gio 2<&1 >/dev/null ); then
+	USE_GIO=1
+else
+	if [[ -e "/usr/bin/gio" || -e "/bin/gio" || -e "/usr/local/bin/gio" ]]; then
+		USE_GIO=1
+	else
+		USE_GIO=0
+	fi
+fi
+
 function USAGE() {
 	echo -e "Usage:"
 	echo -e "  `basename $0` [OPTION...]"
 	echo -e
-	echo -e "Synchronizes a device's contents using the MTP protocol via gvfs-mtp"
+	echo -e "Synchronizes a device's contents using the MTP protocol via gio/gvfs-mtp"
 	echo -e 
 	echo -e "Options:"
+	echo -e "  -g, --gio 				Use GIO instead of (deprecated) GVFS [default]"
+	echo -e "  -G, --gvfs				Use GVFS instead of GIO"
 	echo -e "  -l, --list				List known devices by ID"
 	echo -e "  -d, --device DEVICE			Sync a specific device based on device ID"
-	echo -e "  -m, --mode MODE			Detection mode (0=auto, 1=gvfs, 2=lsusb)"
-	echo -e "  -u, --unmount				Unmount device from gvfs after sync'ing"	
+	echo -e "  -m, --mode MODE			Detection mode (0=auto, 1=gio/gvfs, 2=lsusb)"
+	echo -e "  -u, --unmount				Unmount device from gio/gvfs after sync'ing"	
 	echo -e "  -n, --noreq				Skip requiments checks"
 	echo -e "  -h, --help				This help screen"
 	exit
@@ -37,15 +49,15 @@ function REQ() {
 	fi
 	(which which >/dev/null || false) 2>/dev/null
 	if [[ "$?" != "0" ]]; then
-		echo -e "\`which' is required for this program to run. Please installing using one of" >&2
+		echo -e "\`which' is required for this program to run. Please install the appropriate package using one of" >&2
 		echo -e "\tyum install which" >&2
 		echo -e "\tdnf install which" >&2
 		echo -e "\tapt-get install which" >&2
 		echo -e "depending on your distribution" >&2
 		exit 1
 	else
-		if ( ! which $1 >/dev/null 2>&1 ); then
-			echo -e "\`$2' is required for this program to run. Please installing using one of" >&2
+		if ( ! ( PATH="${PATH}:/usr/libexec:/usr/lib64/libexec:/usr/local/libexec"; which $1 >/dev/null 2>&1 ) ); then
+			echo -e "\`$1' is required for this program to run. Please install the appropriate package using one of" >&2
 			echo -e "\tyum install $2" >&2
 			echo -e "\tdnf install $2" >&2
 			echo -e "\tapt-get install $3" >&2
@@ -58,16 +70,18 @@ function REQ() {
 function MTPCP() {
 	(
 	IFS=$'\n'
-	for i in $(gvfs-ls -h "$1" 2>/dev/null); do
+	for i in $(LSTOOL -h "$1" 2>/dev/null); do
+		(
 		if [[ ! -d "$SYNCPATH/$2" ]]; then
 			mkdir -p "$SYNCPATH/$2"
 		fi
 		if [[ ! -e "$SYNCPATH/$2/$i" ]]; then
-			gvfs-copy --preserve -p "$1/$i" "$SYNCPATH/$2/$i" 2>/dev/null
+			CPTOOL --preserve -p "$1/$i" "$SYNCPATH/$2/$i" 2>/dev/null
 		fi
+		)
 	done
 	)
-	for i in $(gvfs-ls -h -a directory "$1" 2>/dev/null | grep '(directory)' | awk '{$NF="";$(NF-1)="";print $0}' | sed -e 's/[[:space:]]*$//'); do
+	for i in $(LSTOOL -h -a directory "$1" 2>/dev/null | grep '(directory)' | awk '{$NF="";$(NF-1)="";print $0}' | sed -e 's/[[:space:]]*$//'); do
 		(MTPCP "$1/$i" "$2/$i")
 	done
 }
@@ -106,6 +120,14 @@ NOREQ=0
 
 while [[ "$1" != "" ]]; do
 	case "$1" in
+		-g|--gio)
+			USE_GIO=1
+			shift
+			;;
+		-G|--gvfs)
+			USE_GIO=0
+			shift
+			;;
 		-u|--unmount)
 			UNMOUNT=1
 			shift
@@ -150,6 +172,30 @@ while [[ "$1" != "" ]]; do
 	esac
 done
 
+if ((USE_GIO)); then
+	echo "Using GIO"
+	function MTPTOOL() {
+		gio mount "$@"
+	}
+	function LSTOOL() {
+		gio list "$@"
+	}
+	function CPTOOL() {
+		gio copy "$@"
+	}
+else
+	echo "Using GVFS"
+	function MTPTOOL() {
+		gvfs-mount "$@"
+	}
+	function LSTOOL() {
+		gvfs-ls "$@"
+	}
+	function CPTOOL() {
+		gvfs-copy "$@"
+	}
+fi
+
 case $MODE in
 	0);;
 	1);;
@@ -158,18 +204,18 @@ case $MODE in
 esac
 
 # requirements
-REQ gvfs-mount gvfs-client gvfs-bin
-REQ gvfs-ls gvfs-client gvfs-bin
-REQ gvfs-copy gvfs-client gvfs-bin
-REQ lsusb usbutils usbutils
 if [[ "$NOREQ" == "1" ]]; then
 	true
 else
-	if [[ -e /usr/libexec/gvfsd-mtp || -e /usr/lib/gvfs/gvfsd-mtp || -e /usr/lib64/gvfsd-mtp ]]; then
-		true
+	if ((USE_GIO)); then
+		REQ gio glib2 libglib2
 	else
+		REQ gvfs-mount gvfs-client gvfs-bin
+		REQ gvfs-ls gvfs-client gvfs-bin
+		REQ gvfs-copy gvfs-client gvfs-bin
 		REQ gvfsd-mtp gvfs-mtp gvfs-backends
 	fi
+	REQ lsusb usbutils usbutils
 fi
 
 MTP=""
@@ -188,14 +234,14 @@ if [[ "$DEVID" == "" ]]; then
 
 	if [[ "$MTP" == "" && "$MODE" != "2" ]]; then
 			# select the first MTP device detected by gvfs-mtp
-			MTP=$(gvfs-mount -li|grep MTP -A3|grep activation_root|head -n1|sed -e 's/activation_root=//' -e 's/[[:space:]]//g')
-			DEVNAME=$(gvfs-mount -li|grep MTP -B1|head -n1|sed -e 's/Volume([0-9]\+): //')
+			MTP=$(MTPTOOL -li|grep MTP -A3|grep activation_root|head -n1|sed -e 's/activation_root=//' -e 's/[[:space:]]//g')
+			DEVNAME=$(MTPTOOL -li|grep MTP -B1|head -n1|sed -e 's/Volume([0-9]\+): //')
 			if [[ "$MTP" != "" ]]; then
-				echo -e "Automatically sync'ing device $DEVNAME detected via gvfs"
+				echo -e "Automatically sync'ing device $DEVNAME detected via gio/gvfs"
 			fi
 	fi
 	if [[ "$MTP" == "" ]]; then
-			echo "No device detected through gvfs or manual mode requested. Trying lsusb..." >&2
+			echo "No device detected through gio/gvfs or manual mode requested. Trying lsusb..." >&2
 			# manually choose from a list of connected USB devices
 			(IFS=$'\n'; j=1; for i in `lsusb`;do echo "$j) $i"; ((j++)); done)
 			echo -en "Please enter line number: "; 
@@ -224,12 +270,12 @@ if [[ "$DEVID" == "" ]]; then
 fi
 
 # unmount and re-mount to prevent stale mountpoints
-gvfs-mount -u "$MTP" >/dev/null 2>&1
-if ( ! gvfs-mount -l | grep -q -- $(echo "$MTP"|sed -e 's/\[/\\[/g' -e 's/\]/\\]/g') ); then
-	mounterr=$(gvfs-mount "$MTP" 2>&1 >/dev/null)
+MTPTOOL -u "$MTP" >/dev/null 2>&1
+if ( ! MTPTOOL -l | grep -q -- $(echo "$MTP"|sed -e 's/\[/\\[/g' -e 's/\]/\\]/g') ); then
+	mounterr=$(MTPTOOL "$MTP" 2>&1 >/dev/null)
 	if [[ "$?" != "0" ]]; then
-		echo -e "Could not mount requested device \`$DEVID' using gvfs-mount on address \`${MTP}'. Aborting" >&2
-		echo "gvfs-mount error was: \`${mounterr}'"
+		echo -e "Could not mount requested device \`$DEVID' using MTPTOOL on address \`${MTP}'. Aborting" >&2
+		echo "MTPTOOL error was: \`${mounterr}'"
 		exit 2
 	fi
 fi
@@ -281,8 +327,9 @@ EOF
 	) > $CONF/$DEVID/sync_paths
 fi
 (
+
 IFS=$'\n'
-for i in `gvfs-ls "$MTP" 2>/dev/null`;do
+for i in `LSTOOL "$MTP" 2>/dev/null`; do
 	for j in `seq 1 $(cat $CONF/$DEVID/sync_paths $CONF/$DEVID/user_sync_paths 2>/dev/null | sed -e 's/" *"/" "/g' | sort -u | wc -l)`; do
 		eval SRCPATH=(`cat $CONF/1004:61f9/sync_paths|head -n$j|tail -n1`)
 		(echo; echo -e "Sync'ing" "\`$MTP/$i/${SRCPATH[0]}'" into "\`${SRCPATH[1]}'")
@@ -291,5 +338,5 @@ for i in `gvfs-ls "$MTP" 2>/dev/null`;do
 done
 )
 if [[ "$UNMOUNT" == "1" ]]; then
-	gvfs-mount -u "$MTP"
+	MTPTOOL -u "$MTP"
 fi
